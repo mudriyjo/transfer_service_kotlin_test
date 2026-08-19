@@ -1,0 +1,25 @@
+spring:
+  config:
+    activate:
+      on-profile: test
+  flyway:
+    enabled: true
+  kafka:
+    bootstrap-servers: ${TEST_KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:19092}
+    listener:
+      auto-startup: false
+
+transfer:
+  security:
+    mode: mock-header
+  cbs:
+    mode: http
+    base-url: ${CBS_STUB_BASE_URL:http://127.0.0.1:18090}
+    retry:
+      max-attempts: 1
+  jobs:
+    scheduling-enabled: false
+    reconciliation-enabled: false
+    outbox-enabled: false
+  bootstrap:
+    demo-accounts: false

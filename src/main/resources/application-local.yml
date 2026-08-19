@@ -1,0 +1,28 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+  r2dbc:
+    url: ${DB_R2DBC_URL:r2dbc:postgresql://localhost:5432/transfers}
+    username: ${DB_USERNAME:transfers}
+    password: ${DB_PASSWORD:transfers}
+  flyway:
+    url: ${DB_JDBC_URL:jdbc:postgresql://localhost:5432/transfers}
+    user: ${DB_USERNAME:transfers}
+    password: ${DB_PASSWORD:transfers}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+transfer:
+  security:
+    mode: mock-header
+  cbs:
+    mode: in-memory
+    retry:
+      max-attempts: 1
+  jobs:
+    scheduling-enabled: true
+    reconciliation-enabled: true
+    outbox-enabled: true
+  bootstrap:
+    demo-accounts: true

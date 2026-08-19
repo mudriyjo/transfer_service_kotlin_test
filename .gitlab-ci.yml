@@ -1,0 +1,121 @@
+stages:
+  - verify
+  - package
+  - smoke
+
+default:
+  interruptible: true
+
+variables:
+  GRADLE_USER_HOME: "$CI_PROJECT_DIR/.gradle"
+  DOCKER_TLS_CERTDIR: "/certs"
+
+.gradle-job:
+  image: gradle:8.14.4-jdk21-alpine
+  cache:
+    key:
+      files:
+        - gradle/wrapper/gradle-wrapper.properties
+        - build.gradle.kts
+    paths:
+      - .gradle/caches
+      - .gradle/wrapper
+  before_script:
+    - chmod +x gradlew
+
+unit-tests:
+  extends: .gradle-job
+  stage: verify
+  script:
+    - ./gradlew --no-daemon test
+  artifacts:
+    when: always
+    reports:
+      junit: build/test-results/test/*.xml
+
+full-check:
+  extends: .gradle-job
+  stage: verify
+  services:
+    - name: docker:27.5.1-dind
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  script:
+    - ./gradlew --no-daemon check
+  artifacts:
+    when: always
+    reports:
+      junit:
+        - build/test-results/integrationTest/*.xml
+        - build/test-results/contractTest/*.xml
+
+boot-jar:
+  extends: .gradle-job
+  stage: package
+  needs: [full-check]
+  script:
+    - ./gradlew --no-daemon bootJar
+  artifacts:
+    paths:
+      - build/libs/transfer-service.jar
+
+docker-image:
+  image: docker:27.5.1-cli
+  stage: package
+  services:
+    - name: docker:27.5.1-dind
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  script:
+    - docker build --pull --tag transfer-service:verification .
+
+compose-smoke:
+  image: docker:27.5.1-cli
+  stage: smoke
+  needs: [docker-image]
+  services:
+    - name: docker:27.5.1-dind
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    - docker info
+    - docker compose version
+  script:
+    - docker compose config --quiet
+    - docker compose build
+    - docker compose up --detach
+    - |
+      ready=false
+      for attempt in $(seq 1 120); do
+        if docker compose exec -T app wget --quiet --spider http://127.0.0.1:8080/actuator/health/readiness; then
+          ready=true
+          break
+        fi
+        sleep 2
+      done
+      if [ "$ready" != "true" ]; then
+        echo "Application did not become ready within 240 seconds"
+        exit 1
+      fi
+    - docker compose ps
+    - |
+      response="$(docker compose exec -T app wget --quiet -O - \
+        --header='Content-Type: application/json' \
+        --header='X-Customer-Id: 00000000-0000-0000-0000-000000000001' \
+        --header='Idempotency-Key: ci-smoke-internal-0001' \
+        --post-data='{"sourceAccountId":"10000000-0000-0000-0000-000000000001","destinationAccountId":"10000000-0000-0000-0000-000000000002","amount":1.00,"currency":"EUR"}' \
+        http://127.0.0.1:8080/api/v1/transfers/internal)"
+      transfer_id="$(printf '%s' "$response" | sed -n 's/.*"transferId":"\([^"]*\)".*/\1/p')"
+      test -n "$transfer_id"
+      docker compose exec -T app wget --quiet --spider \
+        --header='X-Customer-Id: 00000000-0000-0000-0000-000000000001' \
+        "http://127.0.0.1:8080/api/v1/transfers/$transfer_id"
+  after_script:
+    - docker compose logs --no-color || true
+    - docker compose down --volumes --remove-orphans || true

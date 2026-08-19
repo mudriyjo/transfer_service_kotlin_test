@@ -1,0 +1,13 @@
+.git
+.gitignore
+.gradle
+.gradle-user-home
+.kotlin
+build
+/out
+.idea
+*.iml
+*.log
+.env*
+docker-data
+README.md

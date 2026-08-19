@@ -1,0 +1,13 @@
+.gradle/
+.gradle-user-home/
+build/
+/out/
+.idea/
+*.iml
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+.kotlin/
+docker-data/

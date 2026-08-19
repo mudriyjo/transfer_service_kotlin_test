@@ -1,0 +1,47 @@
+spring:
+  config:
+    activate:
+      on-profile: production
+  r2dbc:
+    url: ${DB_R2DBC_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    pool:
+      initial-size: ${DB_POOL_INITIAL_SIZE:5}
+      max-size: ${DB_POOL_MAX_SIZE:30}
+  flyway:
+    url: ${DB_JDBC_URL}
+    user: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${JWT_ISSUER_URI}
+
+transfer:
+  security:
+    mode: jwt
+  cbs:
+    mode: http
+    base-url: ${CBS_BASE_URL}
+    connect-timeout: ${CBS_CONNECT_TIMEOUT:2s}
+    read-timeout: ${CBS_READ_TIMEOUT:30s}
+    retry:
+      max-attempts: 3
+      initial-delay: ${CBS_RETRY_INITIAL_DELAY:100ms}
+      multiplier: 2.0
+  jobs:
+    scheduling-enabled: true
+    reconciliation-enabled: true
+    outbox-enabled: true
+    reconciliation-delay: ${RECONCILIATION_DELAY:30s}
+    outbox-delay: ${OUTBOX_DELAY:1s}
+    batch-size: ${RECONCILIATION_BATCH_SIZE:500}
+  outbox:
+    batch-size: ${OUTBOX_BATCH_SIZE:200}
+    max-attempts: ${OUTBOX_MAX_ATTEMPTS:5}
+  bootstrap:
+    demo-accounts: false

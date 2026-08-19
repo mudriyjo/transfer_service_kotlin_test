@@ -1,0 +1,89 @@
+spring:
+  application:
+    name: transfer-service
+  main:
+    web-application-type: reactive
+  r2dbc:
+    url: ${DB_R2DBC_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    pool:
+      enabled: true
+      initial-size: 2
+      max-size: 10
+      max-acquire-time: 5s
+  flyway:
+    enabled: true
+    url: ${DB_JDBC_URL}
+    user: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    locations: classpath:db/migration
+    validate-migration-naming: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+    consumer:
+      group-id: transfer-service
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: UTC
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+transfer:
+  security:
+    mode: jwt
+    customer-header: X-Customer-Id
+  cbs:
+    mode: http
+    base-url: ${CBS_BASE_URL}
+    connect-timeout: 2s
+    read-timeout: 30s
+    retry:
+      max-attempts: 1
+      initial-delay: 100ms
+      multiplier: 2.0
+  jobs:
+    scheduling-enabled: false
+    reconciliation-enabled: false
+    outbox-enabled: false
+    reconciliation-delay: 30s
+    outbox-delay: 1s
+    batch-size: 100
+  outbox:
+    topic: transfer.events
+    batch-size: 100
+    max-attempts: 5
+  bootstrap:
+    demo-accounts: false
+
+logging:
+  level:
+    root: INFO
+    com.bank.transfer: INFO
