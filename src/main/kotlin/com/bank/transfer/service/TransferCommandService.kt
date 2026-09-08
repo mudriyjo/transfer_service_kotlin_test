@@ -58,17 +58,15 @@ class TransferCommandService(
         currency: String,
         idempotencyKey: String?,
     ): TransferCommandResult {
-        val authenticatedCustomer = currentCustomer.currentCustomerId()
-        val commandCustomer = requestedCustomerId ?: authenticatedCustomer
-        val effectiveKey = idempotencyKey?.trim()?.takeIf(String::isNotEmpty)
-            ?: UUID.randomUUID().toString()
+        val customerId = currentCustomer.currentCustomerId()
+        accountAccessValidator.requireOwnedActiveAccount(customerId, sourceAccountId)
         val result = externalTransferService.execute(
             ExternalTransferCommand(
-                customerId = commandCustomer,
+                customerId = customerId,
                 sourceAccountId = sourceAccountId,
                 beneficiaryAccount = beneficiaryAccount,
                 money = Money.of(amount, currency),
-                idempotencyKey = effectiveKey,
+                idempotencyKey = idempotencyKey?.trim()?.takeIf(String::isNotEmpty),
             ),
         )
         return TransferCommandResult(result.transfer, result.replayed)
