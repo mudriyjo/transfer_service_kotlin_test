@@ -4,7 +4,6 @@ import com.bank.transfer.domain.Transfer
 import com.bank.transfer.domain.TransferType
 import com.bank.transfer.integration.cbs.CbsTransferRequest
 import java.time.Clock
-import java.util.UUID
 import org.springframework.stereotype.Component
 
 /** Maps the local aggregate to the CBS wire command. */
@@ -19,10 +18,13 @@ class CbsRequestMapper(
         val beneficiaryAccount = requireNotNull(transfer.beneficiaryAccount) {
             "CBS transfer ${transfer.id} has no beneficiary account"
         }
+        val clientReference = requireNotNull(transfer.cbsReference?.takeIf(String::isNotBlank)) {
+            "CBS transfer ${transfer.id} has no provider reference"
+        }
 
         return CbsTransferRequest(
             transferId = transfer.id,
-            clientReference = transfer.cbsReference ?: UUID.randomUUID().toString(),
+            clientReference = clientReference,
             sourceAccountId = transfer.sourceAccountId,
             destinationAccount = beneficiaryAccount,
             amount = transfer.money.amount,

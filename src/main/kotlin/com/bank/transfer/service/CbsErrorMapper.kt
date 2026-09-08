@@ -35,11 +35,9 @@ class CbsErrorMapper(
 
     fun applyFailure(transfer: Transfer, error: Throwable): Transfer =
         when (error) {
-            is CbsTimeoutException -> transfer.markFailed(
-                code = "CBS_TIMEOUT",
-                message = error.message ?: "CBS request timed out",
-                at = clock.instant(),
-            )
+            // The provider may already have committed. Keep PROCESSING so
+            // reconciliation can resolve the persisted cbs_reference.
+            is CbsTimeoutException -> transfer
             is CbsReferenceConflictException -> transfer.markFailed(
                 code = "CBS_REFERENCE_CONFLICT",
                 message = error.message ?: "CBS reference conflict",

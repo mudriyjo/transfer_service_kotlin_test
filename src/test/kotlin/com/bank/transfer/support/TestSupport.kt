@@ -92,10 +92,23 @@ class RecordingCbsClient(
 ) : CbsTransferClient {
     val transferRequests: MutableList<CbsTransferRequest> = mutableListOf()
     val statusRequests: MutableList<String> = mutableListOf()
+    var transferException: Exception? = null
+    var statusOnTransferException: CbsOperationStatus? = CbsOperationStatus.COMPLETED
     private val statuses = ConcurrentHashMap<String, CbsStatusResponse>()
 
     override suspend fun transfer(request: CbsTransferRequest): CbsTransferResponse {
         transferRequests += request
+        transferException?.let { error ->
+            statusOnTransferException?.let { status ->
+                statuses[request.clientReference] = CbsStatusResponse(
+                    operationId = deterministicOperationId(request.clientReference),
+                    clientReference = request.clientReference,
+                    status = status,
+                    processedAt = TEST_INSTANT,
+                )
+            }
+            throw error
+        }
         val response = CbsTransferResponse(
             operationId = deterministicOperationId(request.clientReference),
             clientReference = request.clientReference,
