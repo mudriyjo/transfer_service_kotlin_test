@@ -20,6 +20,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
@@ -62,5 +63,43 @@ class ExternalHappyPathIT {
         assertEquals(1, cbs.transferRequests.size)
         assertNotNull(cbs.transferRequests.single().clientReference)
         assertEquals(1, database.outboxRepository.findByAggregateId(result.transfer.id).size)
+    }
+
+    @Test
+    fun `missing idempotency key replays the same payload instead of submitting twice`() = runBlocking {
+        val database = PostgresTestDatabase.create()
+        database.reset()
+        database.seedAccount(TestIds.SOURCE_ACCOUNT, balance = BigDecimal("1000.0000"))
+        val cbs = RecordingCbsClient()
+        val clock = fixedClock()
+        val service = TransferApplicationService(
+            persistence = database.persistence,
+            policy = TransferPolicy(),
+            requestMapper = CbsRequestMapper(clock),
+            cbsClient = cbs,
+            errorMapper = CbsErrorMapper(clock),
+            outbox = database.outboxService,
+            transactions = database.transactionRunner,
+            transferIdGenerator = DeterministicIdGenerator(TestIds.TRANSFER_ONE, TestIds.TRANSFER_TWO),
+            clock = clock,
+            metrics = TransferMetrics(SimpleMeterRegistry()),
+            logContext = TransferLogContext(),
+        )
+        val command = ExternalTransferCommand(
+            customerId = TestIds.CUSTOMER,
+            sourceAccountId = TestIds.SOURCE_ACCOUNT,
+            beneficiaryAccount = "DE89370400440532013000",
+            money = Money.of("35.50", "EUR"),
+            idempotencyKey = null,
+        )
+
+        val first = service.execute(command)
+        val second = service.execute(command)
+
+        assertFalse(first.replayed)
+        assertTrue(second.replayed)
+        assertEquals(first.transfer.id, second.transfer.id)
+        assertTrue(first.transfer.idempotencyKey.startsWith("implicit:"))
+        assertEquals(1, cbs.transferRequests.size)
     }
 }

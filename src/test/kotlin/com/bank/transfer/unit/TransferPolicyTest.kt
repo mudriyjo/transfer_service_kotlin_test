@@ -37,6 +37,16 @@ class TransferPolicyTest {
         }
     }
 
+    @Test
+    fun `missing external idempotency key is derived from the request fingerprint`() {
+        val fingerprint = policy.fingerprint(input(Money.of("15.00", "EUR"), "DE89370400440532013000"))
+
+        assertEquals("implicit:$fingerprint", policy.resolveExternalIdempotencyKey(null, fingerprint))
+        assertEquals("implicit:$fingerprint", policy.resolveExternalIdempotencyKey("  ", fingerprint))
+        assertEquals("client-key-101", policy.resolveExternalIdempotencyKey(" client-key-101 ", fingerprint))
+        policy.validateIdempotencyKey(policy.resolveExternalIdempotencyKey(null, fingerprint))
+    }
+
     private fun input(money: Money, beneficiary: String) = TransferFingerprintInput(
         type = TransferType.EXTERNAL,
         customerId = TestIds.CUSTOMER,

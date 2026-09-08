@@ -22,7 +22,7 @@ data class ExternalTransferCommand(
     val sourceAccountId: UUID,
     val beneficiaryAccount: String,
     val money: Money,
-    val idempotencyKey: String,
+    val idempotencyKey: String?,
 )
 
 data class ExternalTransferResult(
@@ -47,23 +47,36 @@ class TransferApplicationService(
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
 
-    suspend fun execute(command: ExternalTransferCommand): ExternalTransferResult =
-        persistence.withExternalRequestGuard(command.customerId, command.idempotencyKey) {
-            val result = submit(command)
+    suspend fun execute(command: ExternalTransferCommand): ExternalTransferResult {
+        val fingerprint = policy.fingerprint(
+            TransferFingerprintInput(
+                type = TransferType.EXTERNAL,
+                customerId = command.customerId,
+                sourceAccountId = command.sourceAccountId,
+                beneficiaryAccount = command.beneficiaryAccount,
+                money = command.money,
+            ),
+        )
+        val idempotencyKey = policy.resolveExternalIdempotencyKey(command.idempotencyKey, fingerprint)
+        val normalized = command.copy(idempotencyKey = idempotencyKey)
+        return persistence.withExternalRequestGuard(normalized.customerId, idempotencyKey) {
+            val result = submit(normalized)
             if (!result.replayed && result.transfer.status == TransferStatus.COMPLETED) {
                 appendCompletionEvent(result.transfer)
             }
             result
         }
+    }
 
     private suspend fun submit(
         command: ExternalTransferCommand,
     ): ExternalTransferResult =
         transactions.inTransaction {
+            val idempotencyKey = requireNotNull(command.idempotencyKey)
             val existing = persistence.findByIdempotencyKey(
                 customerId = command.customerId,
                 type = TransferType.EXTERNAL,
-                idempotencyKey = command.idempotencyKey,
+                idempotencyKey = idempotencyKey,
             )
             if (existing != null && existing.status != TransferStatus.FAILED) {
                 return@inTransaction ExternalTransferResult(existing, replayed = true)
@@ -93,7 +106,7 @@ class TransferApplicationService(
                 sourceAccountId = command.sourceAccountId,
                 beneficiaryAccount = command.beneficiaryAccount,
                 money = command.money,
-                idempotencyKey = command.idempotencyKey,
+                idempotencyKey = idempotencyKey,
                 requestFingerprint = fingerprint,
                 now = now,
             )

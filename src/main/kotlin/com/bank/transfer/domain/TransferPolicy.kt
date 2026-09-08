@@ -116,6 +116,15 @@ class TransferPolicy {
             .joinToString(separator = "") { byte -> "%02x".format(byte) }
     }
 
+    /**
+     * Header stays optional for wire compatibility. A missing key must still
+     * collapse retries of the same instruction instead of minting a random token.
+     */
+    fun resolveExternalIdempotencyKey(provided: String?, fingerprint: String): String {
+        val normalized = provided?.trim()?.takeIf(String::isNotEmpty)
+        return normalized ?: "implicit:$fingerprint"
+    }
+
     private fun validateCommon(
         customerId: UUID,
         sourceAccountId: UUID,
