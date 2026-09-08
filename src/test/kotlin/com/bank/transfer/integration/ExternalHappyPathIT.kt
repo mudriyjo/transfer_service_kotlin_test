@@ -19,7 +19,6 @@ import java.math.BigDecimal
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
@@ -59,8 +58,9 @@ class ExternalHappyPathIT {
         assertFalse(result.replayed)
         assertEquals(TransferStatus.COMPLETED, result.transfer.status)
         assertEquals(TransferStatus.COMPLETED, database.persistence.getRequired(result.transfer.id).status)
+        assertEquals("external:${TestIds.TRANSFER_ONE}", result.transfer.cbsReference)
         assertEquals(1, cbs.transferRequests.size)
-        assertNotNull(cbs.transferRequests.single().clientReference)
+        assertEquals(result.transfer.cbsReference, cbs.transferRequests.single().clientReference)
         assertEquals(1, database.outboxRepository.findByAggregateId(result.transfer.id).size)
     }
 }

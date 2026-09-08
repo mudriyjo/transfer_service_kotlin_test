@@ -6,6 +6,7 @@ import com.bank.transfer.domain.TransferFingerprintInput
 import com.bank.transfer.domain.TransferPolicy
 import com.bank.transfer.domain.TransferStatus
 import com.bank.transfer.domain.TransferType
+import com.bank.transfer.integration.cbs.CbsTimeoutException
 import com.bank.transfer.integration.cbs.CbsTransferClient
 import com.bank.transfer.observability.TransferLogContext
 import com.bank.transfer.observability.TransferMetrics
@@ -13,7 +14,6 @@ import com.bank.transfer.persistence.transaction.ReactiveTransactionRunner
 import com.bank.transfer.persistence.transfer.TransferRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 import java.util.UUID
 
@@ -49,17 +49,13 @@ class TransferApplicationService(
 
     suspend fun execute(command: ExternalTransferCommand): ExternalTransferResult =
         persistence.withExternalRequestGuard(command.customerId, command.idempotencyKey) {
-            val result = submit(command)
-            if (!result.replayed && result.transfer.status == TransferStatus.COMPLETED) {
-                appendCompletionEvent(result.transfer)
-            }
-            result
+            submit(command)
         }
 
     private suspend fun submit(
         command: ExternalTransferCommand,
-    ): ExternalTransferResult =
-        transactions.inTransaction {
+    ): ExternalTransferResult {
+        val persisted = transactions.inTransaction {
             val existing = persistence.findByIdempotencyKey(
                 customerId = command.customerId,
                 type = TransferType.EXTERNAL,
@@ -86,8 +82,9 @@ class TransferApplicationService(
                     money = command.money,
                 ),
             )
+            val transferId = transferIdGenerator.nextId()
             val candidate = Transfer.create(
-                id = transferIdGenerator.nextId(),
+                id = transferId,
                 customerId = command.customerId,
                 type = TransferType.EXTERNAL,
                 sourceAccountId = command.sourceAccountId,
@@ -96,40 +93,66 @@ class TransferApplicationService(
                 idempotencyKey = command.idempotencyKey,
                 requestFingerprint = fingerprint,
                 now = now,
+                cbsReference = "external:$transferId",
             )
             val created = persistence.create(candidate)
             val processing = persistence.save(created.markProcessing(clock.instant()))
             metrics.commandAccepted(TransferType.EXTERNAL, command.customerId)
             metrics.transition(processing, TransferStatus.CREATED, TransferStatus.PROCESSING)
+            ExternalTransferResult(processing, replayed = false)
+        }
+        if (persisted.replayed) {
+            return persisted
+        }
+        return completeWithCbs(persisted.transfer)
+    }
 
-            logContext.withTransfer(processing) {
-                logger.info(
-                    "Sending external transfer from account {} to beneficiary {} for customer {}",
-                    processing.sourceAccountId,
-                    processing.beneficiaryAccount,
-                    processing.customerId,
+    private suspend fun completeWithCbs(processing: Transfer): ExternalTransferResult =
+        logContext.withTransfer(processing) {
+            logger.info(
+                "Sending external transfer from account {} to beneficiary {} for customer {}",
+                processing.sourceAccountId,
+                processing.beneficiaryAccount,
+                processing.customerId,
+            )
+            val timer = metrics.startCbsTimer(TransferType.EXTERNAL)
+            try {
+                val response = cbsClient.transfer(requestMapper.toRequest(processing))
+                metrics.stopCbsTimer(timer, TransferType.EXTERNAL, response.status.name)
+                persistOutcome(processing, errorMapper.applyResponse(processing, response))
+            } catch (timeout: CbsTimeoutException) {
+                metrics.stopCbsTimer(timer, TransferType.EXTERNAL, timeout.javaClass.simpleName)
+                logger.warn(
+                    "External transfer {} timed out at CBS; leaving it PROCESSING for status lookup",
+                    processing.id,
                 )
-                val timer = metrics.startCbsTimer(TransferType.EXTERNAL)
-                val updated = try {
-                    val response = cbsClient.transfer(requestMapper.toRequest(processing))
-                    metrics.stopCbsTimer(timer, TransferType.EXTERNAL, response.status.name)
-                    errorMapper.applyResponse(processing, response)
-                } catch (error: Exception) {
-                    metrics.stopCbsTimer(timer, TransferType.EXTERNAL, error.javaClass.simpleName)
-                    errorMapper.applyFailure(processing, error)
-                }
-                val saved = persistence.save(updated)
-                metrics.transition(processing, TransferStatus.PROCESSING, saved.status)
-                if (saved.status == TransferStatus.FAILED) {
-                    metrics.commandFailed(TransferType.EXTERNAL, saved.failureCode ?: "unknown")
-                }
-                ExternalTransferResult(saved, replayed = false)
+                ExternalTransferResult(processing, replayed = false)
+            } catch (error: Exception) {
+                metrics.stopCbsTimer(timer, TransferType.EXTERNAL, error.javaClass.simpleName)
+                persistOutcome(processing, errorMapper.applyFailure(processing, error))
             }
         }
 
-    /** Records the completion event for downstream consumers. */
-    @Transactional
-    suspend fun appendCompletionEvent(transfer: Transfer) {
-        outbox.appendCompleted(transfer)
+    private suspend fun persistOutcome(
+        processing: Transfer,
+        updated: Transfer,
+    ): ExternalTransferResult {
+        val saved = if (updated.status == TransferStatus.COMPLETED) {
+            saveCompletedWithEvent(updated)
+        } else {
+            persistence.save(updated)
+        }
+        metrics.transition(processing, TransferStatus.PROCESSING, saved.status)
+        if (saved.status == TransferStatus.FAILED) {
+            metrics.commandFailed(TransferType.EXTERNAL, saved.failureCode ?: "unknown")
+        }
+        return ExternalTransferResult(saved, replayed = false)
     }
+
+    private suspend fun saveCompletedWithEvent(completed: Transfer): Transfer =
+        transactions.inTransaction {
+            val saved = persistence.save(completed)
+            outbox.appendCompleted(saved)
+            saved
+        }
 }

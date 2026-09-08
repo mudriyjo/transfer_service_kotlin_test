@@ -10,6 +10,7 @@ import com.bank.transfer.support.fixedClock
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 @Tag("unit")
 class CbsRequestMapperTest {
@@ -38,5 +39,46 @@ class CbsRequestMapperTest {
         assertEquals(transfer.money.amount, request.amount)
         assertEquals(transfer.beneficiaryAccount, request.destinationAccount)
         assertEquals(TEST_INSTANT, request.requestedAt)
+    }
+
+    @Test
+    fun `maps an external transfer with its persisted provider reference`() {
+        val transfer = Transfer.create(
+            id = TestIds.TRANSFER_ONE,
+            customerId = TestIds.CUSTOMER,
+            type = TransferType.EXTERNAL,
+            sourceAccountId = TestIds.SOURCE_ACCOUNT,
+            beneficiaryAccount = "DE89370400440532013000",
+            money = Money.of("15.00", "EUR"),
+            idempotencyKey = "external-key-101",
+            requestFingerprint = "external-fingerprint-101",
+            now = TEST_INSTANT,
+            cbsReference = "external:${TestIds.TRANSFER_ONE}",
+        )
+
+        val request = mapper.toRequest(transfer)
+
+        assertEquals(transfer.cbsReference, request.clientReference)
+        assertEquals(transfer.id, request.transferId)
+        assertEquals(transfer.beneficiaryAccount, request.destinationAccount)
+    }
+
+    @Test
+    fun `rejects a CBS transfer that has no provider reference`() {
+        val transfer = Transfer.create(
+            id = TestIds.TRANSFER_ONE,
+            customerId = TestIds.CUSTOMER,
+            type = TransferType.EXTERNAL,
+            sourceAccountId = TestIds.SOURCE_ACCOUNT,
+            beneficiaryAccount = "DE89370400440532013000",
+            money = Money.of("15.00", "EUR"),
+            idempotencyKey = "external-key-102",
+            requestFingerprint = "external-fingerprint-102",
+            now = TEST_INSTANT,
+        )
+
+        assertThrows<IllegalArgumentException> {
+            mapper.toRequest(transfer)
+        }
     }
 }
